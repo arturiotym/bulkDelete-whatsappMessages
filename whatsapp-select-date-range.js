@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-// License: https://polyformproject.org/licenses/noncommercial/1.0.0
 /* WhatsApp Web, locale-aware selection. Paste this file into the console once.
  * Then run: await waSelectRange({start:'14/09/2026', end:'22/09/2026'})
  * Selects messages only, including both endpoint dates. Never clicks Delete.
@@ -147,8 +145,9 @@
     const value = Number(groups[0].replace(/\D/g, ''));
     return Number.isSafeInteger(value) ? value : null;
   }
-  function readMessages(panel, profile) {
+  function readMessages(panel, profile, dateCache = new Map()) {
     let day = null;
+    let precedingLabel = null;
     const rows = [];
     for (const element of panel.querySelectorAll('*')) {
       if (element.matches(ROW)) {
@@ -158,13 +157,22 @@
           throw new Error('Message timestamp and day separator disagree. Selection stopped.');
         if (explicitDay !== null) day = explicitDay;
         const box = element.querySelector(BOX);
-        rows.push({ id: element.getAttribute('data-id'), day: explicitDay ?? day,
+        const id = element.getAttribute('data-id');
+        const resolved = explicitDay ?? day ?? dateCache.get(id) ?? null;
+        if (resolved !== null) {
+          if (dateCache.has(id) && dateCache.get(id) !== resolved)
+            throw new Error('A previously verified message date changed. Selection stopped.');
+          dateCache.set(id, resolved);
+        }
+        rows.push({ id, day: resolved, precedingLabel,
           rendered: Boolean(element.querySelector('[data-testid="msg-container"]')),
           checked: box?.getAttribute('aria-checked') === 'true', box, element });
       } else if (!element.children.length && !element.closest(ROW)) {
         // Do not carry a date across an unrecognized separator or system notice.
-        if (element.textContent.trim() && !element.closest('svg,script,style'))
+        if (element.textContent.trim() && !element.closest('svg,script,style')) {
+          precedingLabel = element.textContent.trim().slice(0,120);
           day = profile.labelDate(element.textContent);
+        }
       }
     }
     return rows;
@@ -195,6 +203,7 @@
     run.last = state;
     const selected = new Set();
     const audited = new Set();
+    const dateCache = new Map();
     const visible = el => el && el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden';
     function guard() {
       if (state.stopped) throw new Error('Stopped. Existing selection was left in place.');
@@ -253,6 +262,32 @@
       }
       const panel = main.querySelector(PANEL);
       if (!panel) throw new Error('Message scroller was not found.');
+      const readRows = () => readMessages(panel, profile, dateCache);
+      async function recoverDates(initialRows) {
+        const missing = initialRows.filter(r => r.rendered && r.day === null);
+        if (!missing.length) return initialRows;
+        const anchor = initialRows.find(r => r.rendered)?.id;
+        console.log('[WhatsApp] Loading earlier context to identify media-message dates...');
+        let attempts = 0;
+        // Verify by the same message ID, never by assuming the next day's date.
+        while (missing.some(r => !dateCache.has(r.id)) && attempts++ < 20) {
+          guard();
+          panel.scrollBy({ top: -Math.max(100, panel.clientHeight * 0.65), behavior: 'instant' });
+          await sleep(600);
+          readRows();
+        }
+        const unresolved = missing.filter(r => !dateCache.has(r.id));
+        if (unresolved.length) {
+          state.dateDiagnostics = { locale: profile.locale, dateOrder: profile.order,
+            unresolved: unresolved.map(r => ({ id: r.id, precedingLabel: r.precedingLabel })) };
+          throw new Error(`Could not resolve dates for ${unresolved.length} message(s) after loading earlier context. See waSelectRange.last.dateDiagnostics. No unknown-date messages were selected.`);
+        }
+        const anchorRow = getRow(anchor);
+        if (!anchorRow) throw new Error('Date context recovered, but the original message left the loaded history. Selection stopped; retry from this position.');
+        anchorRow.scrollIntoView({ block: 'start', behavior: 'instant' });
+        await sleep(450);
+        return readRows();
+      }
       // Establish the newest end of the chat before walking backward.
       let stable = 0, signature = '';
       for (let i = 0; i < 30 && stable < 3; i++) {
@@ -277,11 +312,11 @@
       const olderRequests = new Set();
       while (!boundary) {
         guard();
-        const rows = readMessages(panel, profile);
+        const rows = await recoverDates(readRows());
         const rendered = rows.filter(r => r.rendered);
         if (!rendered.length) throw new Error('No rendered messages. Selection stopped.');
-        if (rendered.some(r => r.day === null))
-          throw new Error('A message date could not be established. Selection stopped.');
+        // Restoring the viewport may reveal another older row. Recover it next pass.
+        if (rendered.some(r => r.day === null)) continue;
         const pending = rendered.filter(r => !audited.has(r.id)).reverse();
         for (const row of pending) {
           guard();
@@ -306,7 +341,7 @@
           }
         }
         // Read again after scrolling caused by selection; newly loaded rows must be processed.
-        const fresh = readMessages(panel, profile);
+        const fresh = readRows();
         if (fresh.some(r => r.rendered && !audited.has(r.id))) continue;
         const firstOlder = fresh.findLastIndex(r => r.day !== null && r.day < from);
         if (firstOlder >= 0) {
@@ -341,7 +376,7 @@
         return { ...state };
       }
       await waitFor(() => count() === selected.size, 'Final selection count mismatch.');
-      for (const r of readMessages(panel, profile)) {
+      for (const r of readRows()) {
         if (r.checked && (!selected.has(r.id) || r.day < from || r.day > to))
           throw new Error('Unexpected message selected. Selection stopped.');
       }
@@ -360,10 +395,14 @@
     }
   }
   run.stop = () => { if (active) active.stopped = true; };
+  run.isRunning = () => Boolean(active);
+  run.version = '1.0.1';
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = { parseDate, makeLocale, parseCount, readMessages, run };
   } else {
-    if (window.waSelectRange) throw new Error('waSelectRange is already installed. Reload before replacing it.');
+    const previous = window.waSelectRange;
+    if (previous && (previous.isRunning?.() || ['starting','selecting'].includes(previous.last?.phase)))
+      throw new Error('The previous selector is running. Stop it and wait before installing this update.');
     window.waSelectRange = run;
     console.log('Installed waSelectRange. Example: await waSelectRange({start:"14/09/2026", end:"22/09/2026"})');
   }
