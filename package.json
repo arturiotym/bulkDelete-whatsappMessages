@@ -1,0 +1,13 @@
+{
+  "name": "whatsapp-date-range-selector",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Select WhatsApp Web messages by inclusive date range without deleting them.",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node tests/locale.cjs && node tests/selection.cjs"
+  }
+}
