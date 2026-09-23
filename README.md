@@ -46,11 +46,30 @@ await waSelectRange({
 
 The script clears an existing selection, enters selection mode, starts at the latest message, scrolls backward and selects matching messages. Voice messages and media inherit dates from day separators. Unrecognized dates/separators cause a stop rather than guessing. Progress prints after every 1,000 selected messages and at completion; internal date/checkbox checks continue as messages load.
 
-Keep the conversation open and avoid interacting with the page during selection. To stop, run waSelectRange.stop(). Inspect waSelectRange.last for the result. Stopping leaves the current partial selection in place. It never clicks Delete or changes media-deletion settings.
+Keep the conversation open and avoid interacting with the page during selection. See **Stop the script** below to cancel. It never clicks Delete or changes media-deletion settings.
 
 Close any open dialogs yourself before running. The script must reach an earlier dated message to establish the start boundary. If older history cannot load, or the requested start predates the entire available conversation, it stops with an incomplete-range error. Automatic scrolling works in any language; the optional explicit loadOlderSelector can target an already-identified history-loading control. No translated loading-banner text is guessed.
 
-If an older version is already installed, reload the page before installing this file. Reloading clears any current selection.
+You can paste version 1.0.1 over an installed version once the previous run has stopped. No page reload is required. Rerunning starts a fresh selection and clears the old partial selection.
+
+## Stop the script
+
+While selection is running, enter this command in the same browser console and press Enter:
+
+```javascript
+waSelectRange.stop();
+```
+
+The script stops at its next cancellation check, which may follow a brief loading wait. Messages already selected remain selected; nothing is deleted. A `Stopped. Existing selection was left in place.` console error is expected after a manual stop.
+
+Check whether it has finished stopping and inspect the partial result:
+
+```javascript
+waSelectRange.isRunning(); // false once stopped
+waSelectRange.last;        // status, selected count, and any error
+```
+
+Wait until `isRunning()` returns `false` before installing an update or running again. Rerunning your date-range command clears the partial selection and starts a fresh selection; it does not resume the previous run.
 
 ## Validation and limits
 
@@ -67,3 +86,10 @@ Node.js 20 or newer is sufficient for the dependency-free tests. Run `npm test` 
 This project is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE). The license permits noncommercial purposes and expressly permits certain organizational uses; see the full license for the scope of those permissions.
 
 Commercial use outside those permissions requires a separately agreed paid commercial license before use. Contact **[YOUR_CONTACT_EMAIL]** to discuss terms. No commercial license is granted merely by sending an inquiry or downloading this repository. See [COMMERCIAL.md](COMMERCIAL.md).
+
+## Missing message-date recovery (1.0.1)
+
+Media messages can appear before their day header has loaded. The selector now scrolls backward to load date context, caches verified dates by message ID, and returns to the original messages. It does not assign an earlier message the date of the next day separator. If context remains unavailable, it stops and records IDs and preceding labels in `waSelectRange.last.dateDiagnostics`; message bodies are not included in that diagnostic.
+
+Regression tests cover successful context recovery and stopping when context cannot be recovered.
+
